@@ -364,3 +364,24 @@ variable "tfe_workspace" {
   })
   description = "TFE workspace settings"
 }
+
+variable "account_access" {
+  type = object({
+    apply_role_name = optional(string, "AWSControlTowerExecution")
+    plan_role = optional(object({
+      create             = optional(bool, false)
+      assume_during_plan = optional(bool, false)
+      name               = optional(string, "AVMPlanReadOnlyRole")
+      trusted_role_arns  = optional(list(string), [])
+      policy_arns        = optional(set(string), [])
+      policy             = optional(string)
+    }), {})
+  })
+  default     = {}
+  description = "Roles this module's own `aws.account` provider assumes in the account: `apply_role_name` during apply (and during plan until `plan_role.assume_during_plan` is set), `plan_role` during plan. Set `plan_role.create` first and `plan_role.assume_during_plan` on a later run, because the role is created by the apply phase. `plan_role.trusted_role_arns` must name the plan role(s) of the workspace calling this module."
+
+  validation {
+    condition     = !var.account_access.plan_role.create || length(var.account_access.plan_role.trusted_role_arns) > 0
+    error_message = "account_access.plan_role.trusted_role_arns must name at least one principal when the plan role is created."
+  }
+}

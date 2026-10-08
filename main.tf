@@ -45,6 +45,16 @@ locals {
 # AWS Account & Settings
 ################################################################################
 
+locals {
+  # The role this module's own provider assumes in the vended account. During the plan phase
+  # (terraform.applying == false) the read-only plan role is used once it is enabled; the apply
+  # phase always uses the admin role. `terraform.applying` is ephemeral, so this local is too, and
+  # may only feed the provider block below.
+  account_provider_role_name = (
+    var.account_access.plan_role.assume_during_plan && !terraform.applying
+  ) ? var.account_access.plan_role.name : var.account_access.apply_role_name
+}
+
 provider "aws" {
   alias  = "account"
   region = var.tfe_workspace.default_region
@@ -54,8 +64,79 @@ provider "aws" {
   }
 
   assume_role {
-    role_arn = "arn:aws:iam::${module.account.id}:role/AWSControlTowerExecution"
+    role_arn = "arn:aws:iam::${module.account.id}:role/${local.account_provider_role_name}"
   }
+}
+
+################################################################################
+# Read-only role for this module's own plan phase
+################################################################################
+
+# Exactly the reads this module's resources (and the auth submodule's roles) need to refresh.
+data "aws_iam_policy_document" "account_plan_role" {
+  #checkov:skip=CKV_AWS_356:Read-only refresh of every IAM resource this module manages; iam:ListAccountAliases cannot be resource-scoped
+  count = var.account_access.plan_role.create ? 1 : 0
+
+  provider = aws.account
+
+  statement {
+    sid       = "ModuleResourceReads"
+    actions   = ["iam:Get*", "iam:List*", "account:GetAlternateContact"]
+    resources = ["*"]
+  }
+}
+
+data "aws_iam_policy_document" "account_plan_role_trust" {
+  count = var.account_access.plan_role.create ? 1 : 0
+
+  provider = aws.account
+
+  statement {
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "AWS"
+      identifiers = var.account_access.plan_role.trusted_role_arns
+    }
+  }
+}
+
+resource "aws_iam_role" "account_plan_role" {
+  count = var.account_access.plan_role.create ? 1 : 0
+
+  provider = aws.account
+
+  name               = var.account_access.plan_role.name
+  path               = var.path
+  assume_role_policy = data.aws_iam_policy_document.account_plan_role_trust[0].json
+}
+
+resource "aws_iam_role_policy" "account_plan_role" {
+  count = var.account_access.plan_role.create ? 1 : 0
+
+  provider = aws.account
+
+  name   = "ModuleResourceReads"
+  role   = aws_iam_role.account_plan_role[0].id
+  policy = data.aws_iam_policy_document.account_plan_role[0].json
+}
+
+resource "aws_iam_role_policy" "account_plan_role_supplement" {
+  count = var.account_access.plan_role.create && var.account_access.plan_role.policy != null ? 1 : 0
+
+  provider = aws.account
+
+  name   = "Supplement"
+  role   = aws_iam_role.account_plan_role[0].id
+  policy = var.account_access.plan_role.policy
+}
+
+resource "aws_iam_role_policy_attachment" "account_plan_role" {
+  for_each = var.account_access.plan_role.create ? var.account_access.plan_role.policy_arns : toset([])
+
+  provider = aws.account
+
+  role       = aws_iam_role.account_plan_role[0].name
+  policy_arn = each.value
 }
 
 module "account" {

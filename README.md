@@ -194,9 +194,9 @@ This is the only scenario where the default workspace's roles and the project's 
 
 ### The module's own access to the account
 
-Besides the roles it creates for the vended workspaces, this module itself needs access to the account: its internal `aws.account` provider assumes a role there to manage the account alias, the alternate contacts, the OIDC provider, the permissions boundaries and the pipeline roles. By default that role is `AWSControlTowerExecution` in every run phase, so the plan phase of the workspace that calls this module reaches administrator access in every account it vends, however tightly that workspace's own plan role is scoped.
+This module manages a few resources inside the account it vends (the account alias, the alternate contacts, the OIDC provider, the permissions boundaries and the pipeline roles) through an internal `aws.account` provider that assumes a role in that account. By default that role is `AWSControlTowerExecution`, in the plan phase as well as in the apply phase. The role has administrator access, which the plan phase does not need: during a plan the module only reads.
 
-`account_access` lets the plan phase use a read-only role instead. The provider picks its role with [`terraform.applying`](https://developer.hashicorp.com/terraform/language/functions/terraform-applying): the plan phase assumes `account_access.plan_role.name`, the apply phase keeps assuming `account_access.apply_role_name`. The module creates the read-only role in the account during the apply phase, with exactly the reads its own resources need to refresh (`iam:Get*`, `iam:List*` and `account:GetAlternateContact`). `policy_arns` and `policy` extend it.
+`account_access` lets the plan phase use a read-only role instead. The provider selects its role with [`terraform.applying`](https://developer.hashicorp.com/terraform/language/functions/terraform-applying): the plan phase assumes `account_access.plan_role.name`, the apply phase assumes `account_access.apply_role_name`. The module can create the read-only role in the account itself, during the apply phase, with exactly the reads its own resources need to refresh (`iam:Get*`, `iam:List*` and `account:GetAlternateContact`). `policy_arns` and `policy` extend it.
 
 | Field | Purpose | Default |
 | --- | --- | --- |
@@ -204,15 +204,15 @@ Besides the roles it creates for the vended workspaces, this module itself needs
 | `plan_role.create` | Create the read-only role in the account. | `false` |
 | `plan_role.assume_during_plan` | Assume the read-only role during the plan phase. | `false` |
 | `plan_role.name` | Name of the read-only role. | `AVMPlanReadOnlyRole` |
-| `plan_role.trusted_role_arns` | Principals allowed to assume it: the plan role(s) of the workspace that calls this module. Required when `create` is `true`. | `[]` |
+| `plan_role.trusted_role_arns` | Principals allowed to assume it: the role(s) the plan phase of the configuration that calls this module runs as. Required when `create` is `true`. | `[]` |
 | `plan_role.policy_arns`, `plan_role.policy` | Extra managed policies and an extra inline policy (Allow or Deny statements) on top of the module-managed reads. | none |
 
-The two flags are separate on purpose: enabling both in one change would make the first plan assume a role that only the apply creates. Roll out in this order, verifying a clean plan and apply at each step:
+The two flags are separate on purpose: enabling both in one change would make the first plan assume a role that only the apply creates. Enable them in this order, verifying a clean plan and apply at each step:
 
-1. Allow the calling workspace's plan role `sts:AssumeRole` on `arn:aws:iam::*:role/<plan_role.name>`.
-2. Set `plan_role.create = true`: the plan is unchanged, the apply creates the role.
+1. Allow the plan-phase role of the configuration that calls this module to `sts:AssumeRole` on `arn:aws:iam::*:role/<plan_role.name>`.
+2. Set `plan_role.create = true`: the plan is unchanged, the apply creates the role in every account managed by the configuration.
 3. Set `plan_role.assume_during_plan = true`: the plan phase now assumes the read-only role, the apply phase is unchanged.
-4. Remove `AWSControlTowerExecution` from the calling plan role's allowed assume targets.
+4. Optionally, remove `AWSControlTowerExecution` from the plan-phase role's allowed assume targets, so that a plan can no longer reach administrator access in the vended accounts.
 
 ```hcl
 module "aws_account" {
@@ -224,7 +224,7 @@ module "aws_account" {
     plan_role = {
       create             = true
       assume_during_plan = true
-      trusted_role_arns  = ["arn:aws:iam::111111111111:role/TFEPipelineVendingPlanRole"]
+      trusted_role_arns  = ["arn:aws:iam::111111111111:role/LandingZonePlanRole"]
     }
   }
   ...

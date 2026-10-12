@@ -46,13 +46,18 @@ locals {
 ################################################################################
 
 locals {
-  # The role this module's own provider assumes in the vended account. During the plan phase
-  # (terraform.applying == false) the read-only plan role is used once it is enabled; the apply
-  # phase always uses the admin role. `terraform.applying` is ephemeral, so this local is too, and
-  # may only feed the provider block below.
-  account_provider_role_name = (
-    var.account_access.plan_role.assume_during_plan && !terraform.applying
-  ) ? var.account_access.plan_role.name : var.account_access.apply_role_name
+  # The plan role is created under `var.path`, so its ARN carries that path; the apply role is a
+  # landing zone role at the root path.
+  account_apply_role_arn = "arn:aws:iam::${module.account.id}:role/${var.account_provider_roles.apply_name}"
+  account_plan_role_arn  = "arn:aws:iam::${module.account.id}:role${var.path}${var.account_provider_roles.plan.name}"
+
+  # The role this module's own provider assumes in the vended account. The plan phase
+  # (terraform.applying == false) uses the read-only plan role once `plan.assume` is set; the
+  # apply phase always uses the apply role. `terraform.applying` is ephemeral, so this local is
+  # too, and may only feed the provider block below.
+  account_provider_role_arn = (
+    var.account_provider_roles.plan.assume && !terraform.applying
+  ) ? local.account_plan_role_arn : local.account_apply_role_arn
 }
 
 provider "aws" {
@@ -64,7 +69,7 @@ provider "aws" {
   }
 
   assume_role {
-    role_arn = "arn:aws:iam::${module.account.id}:role/${local.account_provider_role_name}"
+    role_arn = local.account_provider_role_arn
   }
 }
 
@@ -72,71 +77,39 @@ provider "aws" {
 # Read-only role for this module's own plan phase
 ################################################################################
 
-# Exactly the reads this module's resources (and the auth submodule's roles) need to refresh.
+# Exactly the reads this module's resources (and the pipeline roles it creates) need to refresh,
+# extended with whatever the caller passes in `plan.policy`.
 data "aws_iam_policy_document" "account_plan_role" {
   #checkov:skip=CKV_AWS_356:Read-only refresh of every IAM resource this module manages; iam:ListAccountAliases cannot be resource-scoped
-  count = var.account_access.plan_role.create ? 1 : 0
+  count = var.account_provider_roles.plan.create ? 1 : 0
 
   provider = aws.account
 
+  source_policy_documents = var.account_provider_roles.plan.policy != null ? [var.account_provider_roles.plan.policy] : []
+
   statement {
-    sid       = "ModuleResourceReads"
+    sid       = "AvmModuleReads"
     actions   = ["iam:Get*", "iam:List*", "account:GetAlternateContact"]
     resources = ["*"]
   }
 }
 
-data "aws_iam_policy_document" "account_plan_role_trust" {
-  count = var.account_access.plan_role.create ? 1 : 0
+module "account_plan_role" {
+  source  = "schubergphilis-ep/mcaf-role/aws"
+  version = "~> 0.6.0"
 
-  provider = aws.account
+  count = var.account_provider_roles.plan.create ? 1 : 0
 
-  statement {
-    actions = ["sts:AssumeRole"]
-    principals {
-      type        = "AWS"
-      identifiers = var.account_access.plan_role.trusted_role_arns
-    }
-  }
-}
+  providers = { aws = aws.account }
 
-resource "aws_iam_role" "account_plan_role" {
-  count = var.account_access.plan_role.create ? 1 : 0
-
-  provider = aws.account
-
-  name               = var.account_access.plan_role.name
-  path               = var.path
-  assume_role_policy = data.aws_iam_policy_document.account_plan_role_trust[0].json
-}
-
-resource "aws_iam_role_policy" "account_plan_role" {
-  count = var.account_access.plan_role.create ? 1 : 0
-
-  provider = aws.account
-
-  name   = "ModuleResourceReads"
-  role   = aws_iam_role.account_plan_role[0].id
-  policy = data.aws_iam_policy_document.account_plan_role[0].json
-}
-
-resource "aws_iam_role_policy" "account_plan_role_supplement" {
-  count = var.account_access.plan_role.create && var.account_access.plan_role.policy != null ? 1 : 0
-
-  provider = aws.account
-
-  name   = "Supplement"
-  role   = aws_iam_role.account_plan_role[0].id
-  policy = var.account_access.plan_role.policy
-}
-
-resource "aws_iam_role_policy_attachment" "account_plan_role" {
-  for_each = var.account_access.plan_role.create ? var.account_access.plan_role.policy_arns : toset([])
-
-  provider = aws.account
-
-  role       = aws_iam_role.account_plan_role[0].name
-  policy_arn = each.value
+  description           = "Read-only role for the plan phase of the configuration that manages this account with terraform-aws-mcaf-avm"
+  name                  = var.account_provider_roles.plan.name
+  path                  = var.path
+  policy_arns           = var.account_provider_roles.plan.policy_arns
+  postfix               = false
+  principal_identifiers = var.account_provider_roles.plan.trusted_role_arns
+  principal_type        = "AWS"
+  role_policy           = data.aws_iam_policy_document.account_plan_role[0].json
 }
 
 module "account" {

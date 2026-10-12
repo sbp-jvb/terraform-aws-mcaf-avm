@@ -2,6 +2,23 @@
 
 This document captures required refactoring on your part when upgrading to a module version that contains breaking changes.
 
+## Upgrading to v11.1.0
+
+### Key Changes v11.1.0
+
+Not a breaking release: with the defaults the module behaves as before, its own `aws.account` provider assuming `AWSControlTowerExecution` in every run phase. The new `account_provider_roles` variable lets the plan phase assume a module-created read-only role instead, see [the README](README.md#the-modules-own-access-to-the-account). New accounts can enable it in one go; accounts that already exist need the steps below, because the role is created by the apply phase and a plan cannot assume a role that does not exist yet.
+
+### How to upgrade v11.1.0
+
+Enable the two flags in separate runs, verifying a clean plan and apply at each step. Every step is a plain revert.
+
+1. Allow the plan-phase role of the configuration that calls this module to `sts:AssumeRole` on `arn:aws:iam::*:role<path><name>` (`arn:aws:iam::*:role/AVMPlanReadOnlyRole` with the defaults).
+2. Set `account_provider_roles.plan.create = true`, with `trusted_role_arns` naming that plan-phase role: the plan is unchanged, the apply creates the read-only role in every account managed by the configuration.
+3. Set `account_provider_roles.plan.assume = true`: the plan phase now assumes the read-only role, the apply phase is unchanged.
+4. Optionally remove `AWSControlTowerExecution` from the plan-phase role's allowed assume targets, so that a plan can no longer reach administrator access in the vended accounts.
+
+The flags are set per module instance, so steps 2 and 3 can be rolled out account by account, and an account whose role is missing is recovered by setting `plan.assume = false` for that instance alone, planning and applying, and setting it back.
+
 ## Upgrading to v11.0.0
 
 ### Key Changes v11.0.0

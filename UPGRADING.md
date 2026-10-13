@@ -12,10 +12,10 @@ Not a breaking release: with the defaults the module behaves as before, its own 
 
 Enable the two flags in separate runs, verifying a clean plan and apply at each step. Every step is a plain revert.
 
-1. Allow the plan-phase role of the configuration that calls this module to `sts:AssumeRole` on `arn:aws:iam::*:role<path><name>` (`arn:aws:iam::*:role/AVMPlanReadOnlyRole` with the defaults).
-2. Set `account_provider_roles.plan.create = true`, with `trusted_role_arns` naming that plan-phase role: the plan is unchanged, the apply creates the read-only role in every account managed by the configuration.
+1. Give the role the workspace running this module uses for its plan phase (the role behind `TFC_AWS_PLAN_ROLE_ARN`, or its run role when it has no phase-specific roles) an IAM statement allowing `sts:AssumeRole` on `arn:aws:iam::*:role<path><name>` (`arn:aws:iam::*:role/AVMPlanReadOnlyRole` with the defaults). The module's provider chains from that role into every vended account, so this is the same kind of permission it already needs on `arn:aws:iam::*:role/AWSControlTowerExecution` today; with `AdministratorAccess` both are implicit.
+2. Set `account_provider_roles.plan.create = true`, with `trusted_role_arns` naming that role: the plan is unchanged, the apply creates the read-only role in every account managed by the configuration.
 3. Set `account_provider_roles.plan.assume = true`: the plan phase now assumes the read-only role, the apply phase is unchanged.
-4. Optionally remove `AWSControlTowerExecution` from the plan-phase role's allowed assume targets, so that a plan can no longer reach administrator access in the vended accounts.
+4. Optionally, remove that role's permission to assume `arn:aws:iam::*:role/AWSControlTowerExecution`; the apply-phase role keeps it. The module no longer needs it during a plan, and without this step a plan, which runs the configuration's code before the apply gate and any policy checks, still has an administrator path into every vended account. This step needs a plan-phase role of its own: a run role shared by both phases must keep the permission for the apply.
 
 The flags are set per module instance, so steps 2 and 3 can be rolled out account by account, and an account whose role is missing is recovered by setting `plan.assume = false` for that instance alone, planning and applying, and setting it back.
 

@@ -27,8 +27,8 @@ module "aws_account" {
     sso_email           = "control-tower-admin@company.com"
   }
 
-  # The plan-phase role of the configuration that calls this module. It must be allowed to assume
-  # arn:aws:iam::*:role/AVMPlanReadOnlyRole.
+  # The role the workspace running this module uses for its plan phase. It needs an IAM statement
+  # allowing sts:AssumeRole on arn:aws:iam::*:role/AVMPlanReadOnlyRole.
   account_provider_roles = {
     plan = {
       create            = true

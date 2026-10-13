@@ -204,10 +204,10 @@ Besides the pipeline roles it creates for the workspaces, this module manages a 
 | `plan.create` | Create the read-only role in the account. | `false` |
 | `plan.assume` | Assume the read-only role during the plan phase. | `false` |
 | `plan.name` | Name of the read-only role, created under `var.path`. | `AVMPlanReadOnlyRole` |
-| `plan.trusted_role_arns` | Principals allowed to assume it: the role(s) the plan phase of the configuration calling this module runs as. Required with `create`. | `[]` |
+| `plan.trusted_role_arns` | Principals allowed to assume it: the role(s) the workspace running this module uses for its plan phase. Required with `create`. | `[]` |
 | `plan.policy_arns`, `plan.policy` | Extra managed policies to attach, and extra statements merged into the module-managed inline policy. | none |
 
-For a new account set `create` and `assume` together. The first run plans before the account exists, so the provider configures itself without a role exactly as it does today; the apply creates the account and the role, and every later plan assumes the read-only role. The only prerequisite is on the calling side: its plan-phase role must be allowed to `sts:AssumeRole` on `arn:aws:iam::*:role<path><name>` (`arn:aws:iam::*:role/AVMPlanReadOnlyRole` with the defaults).
+For a new account set `create` and `assume` together. The first run plans before the account exists, so the provider configures itself without a role exactly as it does today; the apply creates the account and the role, and every later plan assumes the read-only role. The only prerequisite is on the calling side. The module's provider chains from the role the workspace running this module uses for its plan phase (the role behind `TFC_AWS_PLAN_ROLE_ARN`, or its run role when it has no phase-specific roles) into the vended account, so that role needs an IAM statement allowing `sts:AssumeRole` on `arn:aws:iam::*:role<path><name>` (`arn:aws:iam::*:role/AVMPlanReadOnlyRole` with the defaults), just as it already needs one on `arn:aws:iam::*:role/AWSControlTowerExecution` for the module to work today. With `AdministratorAccess` both are implicit.
 
 ```hcl
 module "aws_account" {
